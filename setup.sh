@@ -11,7 +11,7 @@ TV_VER=0.24.1
 TA_VER=2.9.1
 
 echo "=== TRELLIS2 (visualbruno) setup ==="
-apt-get update -qq && apt-get install -y -qq git wget ca-certificates libgl1 libglib2.0-0 >/dev/null
+apt-get update -qq && apt-get install -y -qq git wget ca-certificates libgl1 libglib2.0-0 libopengl0 >/dev/null
 
 # First boot: copy the baked ComfyUI onto the persistent volume
 if [ ! -f "$COMFY/main.py" ]; then
