@@ -47,21 +47,26 @@ fi
 if [ ! -d "$NODE_DIR" ]; then
   git clone --depth 1 https://github.com/visualbruno/ComfyUI-Trellis2 "$NODE_DIR" || echo "WARN: node clone failed"
 fi
-if [ ! -f /workspace/.trellis2_installed ]; then
+# The image's python lives outside the volume, so check by import instead of a marker file
+if ! $PY -c "import cumesh, o_voxel, flex_gemm, trimesh, easydict, plyfile, zstandard" 2>/dev/null; then
+  echo "Installing Trellis2 dependencies and CUDA wheels..."
   $PIP install -q -r "$NODE_DIR/requirements.txt" || echo "WARN: node requirements failed"
+  # runtime deps of the wheels (installed with --no-deps below)
+  $PIP install -q trimesh easydict plyfile zstandard || echo "WARN: wheel runtime deps failed"
   for w in cumesh-1.0 custom_rasterizer-0.1 flex_gemm-0.0.1 nvdiffrast-0.4.0 nvdiffrec_render-0.0.0 o_voxel-0.0.1; do
     $PIP install -q --no-deps "$WHEEL_BASE/${w}-cp312-cp312-linux_x86_64.whl" || echo "WARN: wheel $w failed"
   done
-  touch /workspace/.trellis2_installed
 fi
 
 # Gated DINOv3 encoder (needs HF_TOKEN and an accepted license)
 DINO="$COMFY/models/facebook/dinov3-vitl16-pretrain-lvd1689m"
 if [ ! -d "$DINO" ] && [ -n "${HF_TOKEN:-}" ]; then
   $PIP install -q "huggingface-hub>=1.5,<2.0"
-  HF_BIN="$(dirname "$PY")/hf"
-  "$HF_BIN" download facebook/dinov3-vitl16-pretrain-lvd1689m --local-dir "$DINO" \
-    || echo "WARN: DinoV3 download failed - accept the license at huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m"
+  DINO_DIR="$DINO" $PY -c "
+import os
+from huggingface_hub import snapshot_download
+snapshot_download('facebook/dinov3-vitl16-pretrain-lvd1689m', local_dir=os.environ['DINO_DIR'], token=os.environ['HF_TOKEN'])
+" || echo "WARN: DinoV3 download failed - check HF_TOKEN and accept the license at huggingface.co/facebook/dinov3-vitl16-pretrain-lvd1689m"
 fi
 
 # Report final versions so problems show up in the pod log
