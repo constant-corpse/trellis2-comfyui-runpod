@@ -50,6 +50,7 @@ fi
 # The image's python lives outside the volume, so check by import instead of a marker file
 if ! $PY -c "import cumesh, o_voxel, flex_gemm, trimesh, easydict, plyfile, zstandard" 2>/dev/null; then
   echo "Installing Trellis2 dependencies and CUDA wheels..."
+  rm -f /workspace/.trellis2_built   # prebuilt wheels below replace any source builds, so rebuild after
   $PIP install -q -r "$NODE_DIR/requirements.txt" || echo "WARN: node requirements failed"
   # runtime deps of the wheels (installed with --no-deps below)
   $PIP install -q trimesh easydict plyfile zstandard || echo "WARN: wheel runtime deps failed"
@@ -57,6 +58,32 @@ if ! $PY -c "import cumesh, o_voxel, flex_gemm, trimesh, easydict, plyfile, zsta
     $PIP install -q --no-deps "$WHEEL_BASE/${w}-cp312-cp312-linux_x86_64.whl" || echo "WARN: wheel $w failed"
   done
 fi
+
+# The prebuilt flex_gemm / o_voxel wheels have no kernels for some GPUs (e.g. L40S, sm_89 -> "no kernel image").
+# Rebuild both from the author's source for this GPU. Installed into the venv on /workspace, so it persists.
+ARCH=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -1 | tr -d ' ')
+BUILD_TAG="${ARCH:-unknown}-torch${TORCH_VER}"
+if [ -n "$ARCH" ] && [ "$(cat /workspace/.trellis2_built 2>/dev/null)" != "$BUILD_TAG" ]; then
+  echo "Building flex_gemm and o_voxel for compute capability $ARCH..."
+  command -v nvcc >/dev/null 2>&1 || apt-get install -y -qq cuda-nvcc-12-8 cuda-cudart-dev-12-8 ninja-build >/dev/null
+  [ -d /workspace/FlexGEMM ] || git clone --recursive -q https://github.com/visualbruno/FlexGEMM.git /workspace/FlexGEMM
+  [ -d /workspace/TRELLIS2-src ] || git clone --recursive -q https://github.com/visualbruno/TRELLIS.2.git /workspace/TRELLIS2-src
+  ( # subshell: the image's pip constraint variables conflict with --no-build-isolation
+    unset PIP_CONSTRAINT PIP_BUILD_CONSTRAINT UV_BUILD_CONSTRAINT
+    export CUDA_HOME=$(dirname "$(dirname "$(command -v nvcc)")") TORCH_CUDA_ARCH_LIST="$ARCH"
+    $PIP install -q setuptools wheel ninja
+    $PIP install -q --no-build-isolation --no-deps --force-reinstall /workspace/FlexGEMM \
+      && $PIP install -q --no-build-isolation --no-deps --force-reinstall /workspace/TRELLIS2-src/o-voxel \
+      && echo "$BUILD_TAG" > /workspace/.trellis2_built
+  ) || echo "WARN: source build of flex_gemm/o_voxel failed"
+fi
+
+# rembg needs a runtime; CPU is enough for a few images (GPU wheel targets CUDA 13 and crashes here)
+$PY -c "import onnxruntime" 2>/dev/null || $PIP install -q onnxruntime || echo "WARN: onnxruntime install failed"
+
+# An empty model folder makes the node think the model is already downloaded and then fail to load it
+[ -d "$COMFY/models/microsoft/TRELLIS.2-4B" ] && [ -z "$(ls -A "$COMFY/models/microsoft/TRELLIS.2-4B")" ] \
+  && rmdir "$COMFY/models/microsoft/TRELLIS.2-4B"
 
 # Gated DINOv3 encoder (needs HF_TOKEN and an accepted license)
 DINO="$COMFY/models/facebook/dinov3-vitl16-pretrain-lvd1689m"
