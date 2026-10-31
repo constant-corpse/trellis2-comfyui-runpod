@@ -39,7 +39,9 @@ mkdir -p "$HF_HOME"
 CUR_TORCH=$($PY -c "import torch;print(torch.__version__.split('+')[0])" 2>/dev/null || echo none)
 if [ "$CUR_TORCH" != "$TORCH_VER" ]; then
   echo "Installing torch $TORCH_VER (found $CUR_TORCH)..."
-  $PIP install -q "torch==$TORCH_VER" "torchvision==$TV_VER" "torchaudio==$TA_VER" \
+  # --ignore-installed: otherwise pip reuses the image's NVIDIA libs from the system Python and torch in the
+  # persistent venv fails with "libcudnn.so.9: cannot open shared object file"
+  $PIP install -q --ignore-installed "torch==$TORCH_VER" "torchvision==$TV_VER" "torchaudio==$TA_VER" \
     --index-url https://download.pytorch.org/whl/cu128 || echo "WARN: torch install failed"
 fi
 
